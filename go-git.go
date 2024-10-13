@@ -1,10 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+
+	"compress/zlib"
+	"crypto/sha1"
+	"encoding/hex"
 
 	"github.com/urfave/cli/v2"
 )
@@ -28,7 +34,7 @@ func main() {
 					safeMkdir(filepath.Join(gitFolder, "hooks"))
 					safeMkdir(filepath.Join(gitFolder, "objects"))
 					safeMkdir(filepath.Join(gitFolder, "objects", "info"))
-					safeWriteFile(filepath.Join(gitFolder, "exclude"), []byte("# git ls-files --others --exclude-from=.git/info/exclude\n# Lines that start with '#' are comments.\n# For a project mostly in C, the following would be a good set of\n# exclude patterns (uncomment them if you want to use them):\n# *.[oa]\n# *~\n"))
+					safeWriteFile(filepath.Join(gitFolder, "exclude"), []byte("# go-git ls-files --others --exclude-from=.go-git/info/exclude\n# Lines that start with '#' are comments.\n# For a project mostly in C, the following would be a good set of\n# exclude patterns (uncomment them if you want to use them):\n# *.[oa]\n# *~\n"))
 
 					safeMkdir(filepath.Join(gitFolder, "objects", "pack"))
 					safeMkdir(filepath.Join(gitFolder, "refs"))
@@ -49,30 +55,89 @@ func main() {
 						Name:    "write",
 						Aliases: []string{"w"},
 					},
-					&cli.BoolFlag{
-						Name: "stdin",
-					},
+					// &cli.BoolFlag{
+					// 	Name: "stdin",
+					// },
 				},
 				Action: func(cCtx *cli.Context) error {
 					filePath := cCtx.Args().Get(0)
 					write := cCtx.Bool("write")
-					stdin := cCtx.Bool("stdin")
+					// stdin := cCtx.Bool("stdin")
 
-					content := ""
-					if filePath != "" {
-						fileBytes, err := os.ReadFile(filePath)
-						if err != nil {
-							log.Fatal(err)
-						}
-						content = string(fileBytes)
-					} else if stdin {
-						log.Fatal("TODO: support stdin")
+					if filePath == "" {
+						log.Fatal("file arg required")
 					}
 
-					header := "blob " + "\000"
+					fileBytes, err := os.ReadFile(filePath)
+					if err != nil {
+						log.Fatal(err)
+					}
 
-					fmt.Printf("write was: %b", write)
-					fmt.Printf("stdin was: %b", stdin)
+					// if stdin {
+					// 	log.Fatal("TODO: support stdin")
+					// }
+
+					header := []byte("blob " + fmt.Sprint(len(fileBytes)) + "\u0000")
+
+					fullContent := append(header, fileBytes...)
+
+					fmt.Println(string(fullContent))
+
+					hasher := sha1.New()
+					hasher.Write(fullContent)
+					hash := hex.EncodeToString(hasher.Sum(nil))
+
+					fmt.Println(hash)
+
+					var b bytes.Buffer
+					w := zlib.NewWriter(&b)
+					w.Write(fullContent)
+					w.Close()
+					//fmt.Print(b.String())
+
+					//fmt.Println()
+					hashRunes := []rune(hash)
+					if write {
+						fmt.Println("writing..")
+						safeMkdir(filepath.Join(".git", "objects", string(hashRunes[:2])))
+						safeWriteFile(filepath.Join(".git", "objects", string(hashRunes[:2]), string(hashRunes[2:])), b.Bytes())
+					}
+					fmt.Println(filepath.Join(".git", "objects", string(hashRunes[:2]), string(hashRunes[2:])))
+
+					// r, err := zlib.NewReader(&b)
+					// if err != nil {
+					// 	log.Fatal(err)
+					// }
+					// io.Copy(os.Stdout, r)
+					// r.Close()
+
+					return nil
+				},
+			},
+			{
+				Name: "cat-file",
+				Action: func(cCtx *cli.Context) error {
+					filePath := cCtx.Args().Get(0)
+					if filePath == "" {
+						log.Fatal("file arg required")
+					}
+
+					// TODO read from .git/[0..1]/[2..40] of sha
+					// TODO take 6 character input and still find correct file
+					fileBytes, err := os.ReadFile(filePath)
+					if err != nil {
+						log.Fatal(err)
+					}
+					fmt.Print(string(fileBytes))
+					fmt.Println()
+					var b bytes.Buffer
+					b.Write(fileBytes)
+					r, err := zlib.NewReader(&b)
+					if err != nil {
+						log.Fatal(err)
+					}
+					io.Copy(os.Stdout, r)
+					r.Close()
 
 					return nil
 				},
